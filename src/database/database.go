@@ -1,21 +1,34 @@
 package database
 
 import (
-	"database/sql"
+	"gorm.io/driver/sqlite"
+	"gorm.io/gorm"
 )
 
-func New() (*sql.DB, error) {
-	// db, err := sql.Open("sqlite3", "database.db")
-	// if err != nil {
-	// 	return nil, err
-	// }
-
-	// defer db.Close()
-	return nil, nil
+type FileRecord struct {
+	Id        uint   `gorm:"primaryKey,unique,autoIncrement"`
+	CreatedAt int64  `json:"created_at"`
+	OwnerId   string `json:"owner"`
+	ExpiresAt int64  `json:"expires_at"`
+	MimeType  string `json:"mime_type"` // Could be useful for making thumbnails
 }
 
-func prepareTables(db *sql.DB) {
-	// errors := make(chan error, 1)
+type UserRecord struct {
+	Id           string `gorm:"primaryKey,unique,autoIncrement"`
+	Email        string `gorm:"unique"`
+	PasswordHash string
+	PasswordSalt string
+	IsVerified   bool
+	Role         string // User, admin, etc
+	CreatedAt    int64
+	LastLogin    int64
+	Language     string // Used to display stuff in different languages
+}
 
-	// db.Exec("CREATE TABLE IF NOT EXIST Images ();")
+func New() (*gorm.DB, error) {
+	db, err := gorm.Open(sqlite.Open("database.db"), &gorm.Config{})
+
+	db.AutoMigrate(&FileRecord{}, &UserRecord{})
+
+	return db, err
 }

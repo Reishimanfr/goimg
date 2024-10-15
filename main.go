@@ -1,7 +1,10 @@
 package main
 
 import (
+	"bash06/goimg/src/database"
+	"bash06/goimg/src/flags"
 	"bash06/goimg/src/logger"
+	"bash06/goimg/src/routes"
 	"bash06/goimg/src/worker"
 	"context"
 	"flag"
@@ -9,17 +12,11 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
-)
-
-var (
-	ovhEndpoint      = flag.String("ovh-endpoint", "", "Endpoint to the OVH container")
-	ovhAccessToken   = flag.String("ovh-access-token", "", "Your OVH access token")
-	ovhSecretKey     = flag.String("ovh-secret-key", "", "Your OVH secret key")
-	ovhRegion        = flag.String("ovh-region", "", "OVH container endpoint (like 'waw' for example)")
-	ovhContainerName = flag.String("ovh-container-name", "", "Name of the container to store files in")
+	"gorm.io/gorm"
 )
 
 func main() {
@@ -31,35 +28,50 @@ func main() {
 		panic(fmt.Errorf("Failed to initialize zap logger: %v", err))
 	}
 
-	if *ovhAccessToken == "" {
-		logger.Fatal("No OVH access token provided")
+	if *flags.HMACSecretKey == "" {
+		logger.Fatal("No HMAC secret key provided. If you want the program to generate one for you set the -generate-hmac-key flag to true")
 	}
 
-	if *ovhSecretKey == "" {
-		logger.Fatal("No OVH secret key provided")
+	if *flags.EnableOvhServer {
+		logger.Debug("OVH server enabled. Checking for required variables now...")
+
+		if *flags.OvhAccessToken == "" {
+			logger.Fatal("No OVH access token provided")
+		}
+
+		if *flags.OvhSecretKey == "" {
+			logger.Fatal("No OVH secret key provided")
+		}
+
+		if *flags.OvhContainerName == "" {
+			logger.Fatal("No OVH container name provided")
+		}
+
+		if *flags.OvhEndpoint == "" {
+			logger.Fatal("No OVH endpoint provided")
+		}
+
+		if *flags.OvhRegion == "" {
+			logger.Fatal("No OVH region provided")
+		}
 	}
 
-	if *ovhContainerName == "" {
-		logger.Fatal("No OVH container name provided")
-	}
-
-	if *ovhEndpoint == "" {
-		logger.Fatal("No OVH endpoint provided")
-	}
-
-	if *ovhRegion == "" {
-		logger.Fatal("No OVH region provided")
-	}
-
-	logger.Info("Establishing connection with OVH")
-
-	_, err = worker.New(*ovhAccessToken, *ovhSecretKey, *ovhRegion, *ovhEndpoint)
+	// TODO: add an option to save files locally
+	w, err := worker.New(*flags.OvhAccessToken, *flags.OvhSecretKey, *flags.OvhRegion, *flags.OvhEndpoint)
 	if err != nil {
 		logger.Fatal("Failed to initialize OVH worker", zap.Error(err))
 	}
 
+	db, err := database.New()
+	if err != nil {
+		logger.Fatal("Failed to initialize sqlite database", zap.Error(err))
+		return
+	}
+
 	r := gin.New()
 	r.Use(gin.Logger())
+
+	routes.InitHandler(r, db, w, logger)
 
 	server := &http.Server{
 		Addr:    ":8080", // TODO: make this a flag
@@ -74,11 +86,14 @@ func main() {
 
 	logger.Info("Server up and running")
 
+	// Function to cleanup old temporary images (sent by unregistered users or when someone checked the "expire after X" box)
+	go startPeriodicCleanup(db, logger, time.Hour*1)
+
 	s := make(chan os.Signal, 1)
 	signal.Notify(s, os.Interrupt)
 	<-s
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
 	if err := server.Shutdown(ctx); err != nil {
@@ -88,4 +103,20 @@ func main() {
 	logger.Info("Gracefully shutting down server")
 }
 
-// go run . -ovh-access-token="a2aa10c1a11342379a3f1255958d4e86" -ovh-secret-key="25aa998b68174e2e9bd319f470a8a60a" -ovh-endpoint="https://s3.waw.io.cloud.ovh.net/" -ovh-region="waw" -ovh-container-name="goimg"
+func startPeriodicCleanup(db *gorm.DB, logger *zap.Logger, interval time.Duration) {
+	ticker := time.NewTicker(interval)
+
+	defer ticker.Stop()
+
+	for {
+		<-ticker.C
+		now := time.Now().Unix()
+
+		err := db.Where("expires_at < ?", now).Delete(&database.FileRecord{}).Error
+		if err != nil {
+			logger.Error("Error while deleting expired files", zap.Error(err))
+		} else {
+			logger.Debug("Periodic expired file cleanup finished")
+		}
+	}
+}
