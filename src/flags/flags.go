@@ -2,7 +2,11 @@
 
 package flags
 
-import "flag"
+import (
+	"flag"
+	"os"
+	"path/filepath"
+)
 
 var (
 	// Stuff related to guests and temporary files
@@ -21,6 +25,8 @@ var (
 	// General stuff related to file uploads
 	// TODO
 	StripMetadata = flag.Bool("strip-file-metadata", true, "Toggles if files should have their metadata stripped")
+	// TODO
+	FileLocation = flag.String("file-location", "on-disk", "Sets where uploaded files will be saved. Must be one of: aws, on-disk, web-dav, remote. (check wiki)")
 
 	// User registration stuff
 	// TODO
@@ -48,12 +54,15 @@ var (
 	// JWT
 	HMACSecretKey = flag.String("hmac-secret-key", "", "A random hmac secret key")
 
-	// OVH stuff (S3 server)
-	EnableOvhServer   = flag.Bool("ovh-enable-server", true, "Toggles if the program should use OVH's S3 servers. If disabled the server will save files in the local storage")
+	// OVH/AWS stuff (this is only required if you set -file-location to "aws")
 	UploadMaxBodySize = flag.Int("upload-max-body-size", 50, "The maximum body size for uploads (in MiB)")
 	OvhEndpoint       = flag.String("ovh-endpoint", "", "Endpoint to the OVH container")
 	OvhAccessToken    = flag.String("ovh-access-token", "", "Your OVH access token")
 	OvhSecretKey      = flag.String("ovh-secret-key", "", "Your OVH secret key")
 	OvhRegion         = flag.String("ovh-region", "", "OVH container endpoint (like 'waw' for example)")
 	OvhContainerName  = flag.String("ovh-container-name", "", "Name of the container to store files in")
+
+	// Other stuff like paths
+	execPath, _ = os.Executable()
+	BasePath    = filepath.Dir(execPath)
 )

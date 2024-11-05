@@ -5,7 +5,6 @@ import (
 	"bash06/goimg/src/flags"
 	"bash06/goimg/src/logger"
 	"bash06/goimg/src/routes"
-	"bash06/goimg/src/worker"
 	"context"
 	"flag"
 	"fmt"
@@ -22,17 +21,19 @@ import (
 func main() {
 	flag.Parse()
 
+	fmt.Println(flags.BasePath)
+
 	// TODO: add flag for prod
 	logger, err := logger.New(nil, false)
 	if err != nil {
 		panic(fmt.Errorf("Failed to initialize zap logger: %v", err))
 	}
 
-	if *flags.HMACSecretKey == "" {
-		logger.Fatal("No HMAC secret key provided. If you want the program to generate one for you set the -generate-hmac-key flag to true")
-	}
+	// if *flags.HMACSecretKey == "" {
+	// 	logger.Fatal("No HMAC secret key provided. If you want the program to generate one for you set the -generate-hmac-key flag to true")
+	// }
 
-	if *flags.EnableOvhServer {
+	if *flags.FileLocation == "aws" {
 		logger.Debug("OVH server enabled. Checking for required variables now...")
 
 		if *flags.OvhAccessToken == "" {
@@ -57,10 +58,10 @@ func main() {
 	}
 
 	// TODO: add an option to save files locally
-	w, err := worker.New(*flags.OvhAccessToken, *flags.OvhSecretKey, *flags.OvhRegion, *flags.OvhEndpoint)
-	if err != nil {
-		logger.Fatal("Failed to initialize OVH worker", zap.Error(err))
-	}
+	// w, err := worker.New(*flags.OvhAccessToken, *flags.OvhSecretKey, *flags.OvhRegion, *flags.OvhEndpoint)
+	// if err != nil {
+	// 	logger.Fatal("Failed to initialize OVH worker", zap.Error(err))
+	// }
 
 	db, err := database.New()
 	if err != nil {
@@ -71,10 +72,10 @@ func main() {
 	r := gin.New()
 	r.Use(gin.Logger())
 
-	routes.InitHandler(r, db, w, logger)
+	routes.InitHandler(r, db, nil, logger)
 
 	server := &http.Server{
-		Addr:    ":8080", // TODO: make this a flag
+		Addr:    ":80", // TODO: make this a flag
 		Handler: r,
 	}
 

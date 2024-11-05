@@ -2,6 +2,7 @@ package routes
 
 import (
 	"bash06/goimg/src/database"
+	"bash06/goimg/src/files"
 	"bash06/goimg/src/flags"
 	"fmt"
 	"math/rand"
@@ -11,8 +12,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/aws/aws-sdk-go/aws"
-	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/gabriel-vasile/mimetype"
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v4"
@@ -23,6 +22,13 @@ import (
 const (
 	themLettersNShit = "abcdefghijklmnoprstuwxyzABCDEFGHIJKLMNOPRSTUWXYZ1234567890"
 )
+
+type FileUploadOptions struct {
+	ExpiresAt   int64
+	CreatedAt   int64
+	MaxFileSize int64
+	OwnerId     string
+}
 
 func randomString(n int) string {
 	if n < 1 {
@@ -38,27 +44,41 @@ func randomString(n int) string {
 	return name
 }
 
-// Uploads a new, singular file to the instance.
-// Depending on how you configured the flags unregistered users have different permissions (or can't use the service)
-func (h *Handler) upload(c *gin.Context) {
-	// This is useful in case someone encounters a 500 error. The user would report the request ID which would make reading the specific logs easier to see what went wrong
-	requestId := randomString(10)
-
-	tokenString := c.GetHeader("Authorization")
-
-	if tokenString == "" && !*flags.AllowGuestUploads {
+func prepGuestUpload(c *gin.Context, requestId string) *FileUploadOptions {
+	if !*flags.AllowGuestUploads {
 		c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
 			"error":      "Guest file uploads are disabled on this server. Please login to upload files. (No token provided)",
 			"status":     "failed",
 			"request_id": requestId,
 		})
-		return
+		return nil
 	}
 
-	tokenString = strings.TrimPrefix(tokenString, "Bearer ")
+	maxFileSize := *flags.MaxFileSize << 20
+
+	if *flags.MaxGuestFileSize > 0 {
+		maxFileSize = *flags.MaxGuestFileSize << 20
+	}
+
+	expiresAt := int64(0)
+
+	if *flags.EnableGuestFileDeletion {
+		expiresAt = time.Now().Add(time.Hour * time.Duration(*flags.GuestFileDeletionTime)).Unix()
+	}
+
+	return &FileUploadOptions{
+		CreatedAt:   time.Now().Unix(),
+		OwnerId:     "",
+		ExpiresAt:   expiresAt,
+		MaxFileSize: int64(maxFileSize),
+	}
+}
+
+func prepUserUpload(c *gin.Context, h *Handler, requestId string) *FileUploadOptions {
+	tokenStr := strings.TrimPrefix(c.GetHeader("Authorization"), "Bearer ")
 	userId := ""
 
-	token, err := jwt.Parse(tokenString, func(t *jwt.Token) (interface{}, error) {
+	token, err := jwt.Parse(tokenStr, func(t *jwt.Token) (interface{}, error) {
 		if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
 			return nil, fmt.Errorf("unexpected signing method: %v", t.Header["alg"])
 		}
@@ -72,7 +92,7 @@ func (h *Handler) upload(c *gin.Context) {
 			"status":     "failed",
 			"request_id": requestId,
 		})
-		return
+		return nil
 	}
 
 	if claims, ok := token.Claims.(jwt.MapClaims); ok && token.Valid {
@@ -83,19 +103,19 @@ func (h *Handler) upload(c *gin.Context) {
 			"status":     "failed",
 			"request_id": requestId,
 		})
-		return
+		return nil
 	}
 
 	var user *database.UserRecord
 
-	if err := h.Db.Where("user_id = ?", userId).First(&user).Error; err != nil {
+	if err := h.Db.Where("uuid = ?", userId).First(&user).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
 			c.AbortWithStatusJSON(http.StatusNotFound, gin.H{
 				"error":      "User with this ID doesn't exist. Please go to the registration page and make a new account",
 				"status":     "failed",
 				"request_id": requestId,
 			})
-			return
+			return nil
 		}
 
 		h.Log.Error("Error while looking up user by ID", zap.String("requestId", requestId), zap.Error(err))
@@ -105,22 +125,45 @@ func (h *Handler) upload(c *gin.Context) {
 			"status":     "failed",
 			"request_id": requestId,
 		})
-		return
+		return nil
 	}
 
 	maxFileSize := *flags.MaxFileSize << 20
 
-	if tokenString == "" && *flags.MaxGuestFileSize > 0 {
-		maxFileSize = *flags.MaxGuestFileSize << 20
+	// TODO: allow users to make files expire after some time
+
+	return &FileUploadOptions{
+		CreatedAt:   time.Now().Unix(),
+		MaxFileSize: int64(maxFileSize),
+		OwnerId:     userId,
+	}
+}
+
+// Uploads a new, singular file to the instance.
+// Depending on how you configured the flags unregistered users have different permissions (or can't use the service)
+func (h *Handler) upload(c *gin.Context) {
+	// This is useful in case someone encounters a 500 error. The user would report the request ID which would make reading the specific logs easier to see what went wrong
+	requestId := randomString(10)
+	tokenString := c.GetHeader("Authorization")
+
+	var uploadOptions *FileUploadOptions
+
+	if tokenString == "" {
+		uploadOptions = prepGuestUpload(c, requestId)
+	} else {
+		uploadOptions = prepUserUpload(c, h, requestId)
 	}
 
-	bodySizeUnsafe, _ := strconv.Atoi(c.Request.Header.Get("Content-Length"))
+	// That means the request was aborted at some point
+	if uploadOptions == nil {
+		return
+	}
 
-	h.Log.Debug("New file is being uploaded...", zap.String("requestId", requestId), zap.Int("Unsafe body size", bodySizeUnsafe))
+	bodySizeUnsafe, _ := strconv.ParseInt(c.Request.Header.Get("Content-Length"), 10, 64)
 
 	// If someone were to claim a 5MiB file is actually 200000MiB I can't be bothered to check if it's true so I might as well use the god forsaken Content-Length header
 	// Why would you lie about your file being larger than it actually is
-	if bodySizeUnsafe > int(maxFileSize) {
+	if bodySizeUnsafe > uploadOptions.MaxFileSize {
 		c.AbortWithStatusJSON(http.StatusRequestEntityTooLarge, gin.H{
 			"error":      "Entity too large",
 			"status":     "failed",
@@ -130,7 +173,7 @@ func (h *Handler) upload(c *gin.Context) {
 	}
 
 	// ...We check again if the file that's supposedly smaller than the limit actually enforces the limit. If not we ofc return a 413
-	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, int64(maxFileSize))
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, uploadOptions.MaxFileSize)
 	fileHeader, err := c.FormFile("file")
 
 	if err != nil {
@@ -171,7 +214,7 @@ func (h *Handler) upload(c *gin.Context) {
 	file.Read(b)
 
 	// The std library detects mp4 files as application/octet-stream....
-	// If I'm straight up wrong please make a PR with the corrected code so I don't need another dep
+	// If I'm wrong please make a PR with the corrected code so I don't need another dep
 	mime := mimetype.Detect(b).String()
 
 	// Reset the file pointer
@@ -186,61 +229,22 @@ func (h *Handler) upload(c *gin.Context) {
 		return
 	}
 
-	fileRecord := &database.FileRecord{
-		CreatedAt: time.Now().Unix(),
+	fileInfo := &files.FileInfo{
+		OwnerId:   uploadOptions.OwnerId,
+		Header:    *fileHeader,
+		MimeType:  mime,
+		ExpiresAt: uploadOptions.ExpiresAt,
 	}
 
-	// People who don't have an account have their files deleted after X hours (configured with flags)
-	// This can be disabled with flags, but it's on by default
-	if tokenString == "" {
-		fileRecord.OwnerId = ""
-
-		if *flags.EnableGuestFileDeletion {
-			duration := time.Duration(*flags.GuestFileDeletionTime) * time.Hour
-			future := time.Now().Add(duration)
-
-			fileRecord.ExpiresAt = future.Unix()
-		}
-	} else {
-		// TODO: look up the person that uploaded the file n attach stuff
-	}
-
-	if err := h.Db.Create(fileRecord).Error; err != nil {
-		h.Log.Error("Failed to create database record", zap.String("requestId", requestId), zap.Error(err))
+	err = h.FManager.Save(fileInfo)
+	if err != nil {
+		h.Log.Error("File manager failed to save file", zap.String("RequestId", requestId), zap.Error(err))
 
 		c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{
-			"error":      "Something went wrong while saving your file",
+			"error":      "Something went wrong while processing your request",
 			"status":     "failed",
 			"request_id": requestId,
 		})
 		return
 	}
-
-	randomFilename := randomString(10)
-
-	s := &s3.PutObjectInput{
-		ACL:         aws.String("public-read"),
-		Body:        file,
-		Bucket:      aws.String(*flags.OvhContainerName),
-		Key:         aws.String(randomFilename),
-		ContentType: aws.String(mime),
-	}
-
-	if _, err := h.W.Svc.PutObject(s); err != nil {
-		h.Log.Error("Failed to upload files to S3", zap.String("requestId", requestId), zap.Error(err))
-
-		c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{
-			"error":      "Something went wrong while saving your file",
-			"status":     "failed",
-			"request_id": requestId,
-		})
-
-		return
-	}
-
-	endpointWithoutHttps := strings.TrimPrefix(*flags.OvhEndpoint, "https://")
-
-	c.JSON(http.StatusOK, gin.H{
-		"url": fmt.Sprintf("https://%s.%s%s", *flags.OvhContainerName, endpointWithoutHttps, randomFilename),
-	})
 }
