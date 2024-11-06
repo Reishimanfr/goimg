@@ -1,18 +1,19 @@
-package routes
+package auth
 
 import (
-	"bash06/goimg/src/database"
 	"bash06/goimg/src/flags"
+	"bash06/goimg/src/util"
 	"net/http"
 	"net/mail"
-	"time"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/gin-gonic/gin/binding"
 	"go.uber.org/zap"
+	"gorm.io/gorm"
 )
 
-type UserRegisterInput struct {
+type UserRegisterBody struct {
 	Email    string `json:"email"`
 	Password string `json:"password"`
 	Language string `json:"language"`
@@ -23,13 +24,8 @@ func validateEmail(email string) bool {
 	return err == nil
 }
 
-// Registering can be configured nicely with flags.
-// You can completely disable registering or require users to be verified before being able to actually use your instance
-// By default users are able to register new accounts and have to be verified manually from the admin dashboard
-// This function will return a JWT token that never expires unless the user decides to regenerate the token
-// Admin users are always allowed to create new accounts, although they need access to the user's email
-func (h *Handler) register(c *gin.Context) {
-	requestId := randomString(10)
+func (h *AuthHandler) register(c *gin.Context) {
+	requestId := util.RandomString(10)
 
 	if !*flags.EnableUserRegister {
 		c.AbortWithStatusJSON(http.StatusServiceUnavailable, gin.H{
@@ -40,10 +36,10 @@ func (h *Handler) register(c *gin.Context) {
 		return
 	}
 
-	NewUserData := new(UserRegisterInput)
+	var newUser *UserRegisterBody
 
-	if err := c.MustBindWith(NewUserData, binding.JSON); err != nil {
-		h.Log.Error("Error while binding JSON data to struct", zap.String("requestId", requestId), zap.Error(err))
+	if err := c.MustBindWith(&newUser, binding.JSON); err != nil {
+		h.Log.Error("Error while binding JSON data to struct", zap.String("RequestId", requestId), zap.Error(err))
 
 		c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{
 			"error":      "Something went wrong while parsing the provided data",
@@ -53,7 +49,7 @@ func (h *Handler) register(c *gin.Context) {
 		return
 	}
 
-	if NewUserData.Email == "" {
+	if strings.Trim(newUser.Email, " ") == "" {
 		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{
 			"error":      "No email provided",
 			"status":     "failed",
@@ -62,16 +58,7 @@ func (h *Handler) register(c *gin.Context) {
 		return
 	}
 
-	if !validateEmail(NewUserData.Email) {
-		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{
-			"error":      "An invalid email address was provided",
-			"status":     "failed",
-			"request_id": requestId,
-		})
-		return
-	}
-
-	if NewUserData.Password == "" {
+	if strings.Trim(newUser.Password, "") == "" {
 		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{
 			"error":      "No password provided",
 			"status":     "failed",
@@ -80,49 +67,56 @@ func (h *Handler) register(c *gin.Context) {
 		return
 	}
 
-	existsEmail := new(database.UserRecord)
-
-	if err := h.Db.Where("email = ?", NewUserData.Email).First(&existsEmail).Error; err != nil {
-		h.Log.Error("Error while checking if email is already used", zap.String("requestId", requestId), zap.Error(err))
-
-		c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{
-			"error":      "Something went wrong while creating an account for you",
+	if !validateEmail(newUser.Email) {
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{
+			"error":      "An invalid email address was provided",
 			"status":     "failed",
 			"request_id": requestId,
 		})
 		return
 	}
 
-	if existsEmail != nil {
+	var exists bool
+	if err := h.Db.Model(&UserAuth{}).Select("count(*) > 0").Where("email = ?", newUser.Email).Find(&exists).Error; err != nil {
+		if err != gorm.ErrRecordNotFound {
+			h.Log.Error("Failed to check if user with email exists", zap.String("RequestId", requestId), zap.Error(err))
+
+			c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{
+				"error":      "Something went wrong while processing your request",
+				"status":     "failed",
+				"request_id": requestId,
+			})
+			return
+		}
+	}
+
+	if exists {
 		c.AbortWithStatusJSON(http.StatusConflict, gin.H{
-			"error":      "An account with this email already exists. Login instead?",
+			"error":      "An account with this email already exists",
 			"status":     "failed",
 			"request_id": requestId,
 		})
 		return
 	}
 
-	hs, err := h.Argon.GenerateHash([]byte(NewUserData.Password), nil)
+	hs, err := h.Argon.GenerateHash([]byte(newUser.Password), nil)
 	if err != nil {
-		h.Log.Error("Error while hashing user password", zap.String("requestId", requestId), zap.Error(err))
+		h.Log.Error("Failed to hash new user password", zap.String("RequestId", requestId), zap.Error(err))
 
 		c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{
-			"error":      "Something went wrong while creating your account",
-			"status":     "failure",
+			"error":      "Something went wrong while processing your request",
+			"status":     "failed",
 			"request_id": requestId,
 		})
 		return
 	}
 
-	newUserRecord := &database.UserRecord{
-		Email:        NewUserData.Email,
-		Role:         "user",
-		LastLogin:    0,
-		CreatedAt:    time.Now().Unix(),
-		Language:     "en",
-		IsVerified:   true,
+	newUserRecord := &UserAuth{
+		Email:        newUser.Email,
 		PasswordHash: string(hs.Hash),
 		PasswordSalt: string(hs.Salt),
+		IsVerified:   true,
+		Role:         "user", // TODO
 	}
 
 	if *flags.VerifyNewUsersManually {
@@ -153,4 +147,5 @@ func (h *Handler) register(c *gin.Context) {
 			"request_id": requestId,
 		})
 	}
+
 }

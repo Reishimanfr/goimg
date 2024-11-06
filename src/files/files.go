@@ -3,6 +3,7 @@ package files
 import (
 	"bash06/goimg/src/database"
 	"bash06/goimg/src/flags"
+	"bash06/goimg/src/util"
 	"bufio"
 	"errors"
 	"fmt"
@@ -15,6 +16,7 @@ import (
 	"strconv"
 	"time"
 
+	"go.uber.org/zap"
 	"gorm.io/gorm"
 )
 
@@ -27,15 +29,24 @@ var (
 	ErrFileOpen           = errors.New("Failed to open file")
 	ErrFileCreate         = errors.New("Failed to create file")
 	ErrFileCopy           = errors.New("Failed to copy file contents")
-	ManagerModeAWS        = "aws"     // TODO
-	ManagerModeOnDisk     = "on-disk" // TODO
-	ManagerModeWebDav     = "web-dav" // TODO
-	ManagerModeRemote     = "remote"  // TODO
+	ManagerMode           = struct {
+		AWS    string
+		OnDisk string
+		WebDav string
+		Remote string
+	}{
+		AWS:    "aws",
+		OnDisk: "on-disk",
+		WebDav: "web-dav",
+		Remote: "remote",
+	}
 )
 
 type FileManager struct {
-	Mode string
-	Db   *gorm.DB
+	Mode          string
+	db            *gorm.DB
+	log           *zap.Logger
+	expiryManager *ExpiryManager
 }
 
 type FileInfo struct {
@@ -45,11 +56,17 @@ type FileInfo struct {
 	ExpiresAt int64
 }
 
-func New(mode string, db *gorm.DB) *FileManager {
-	return &FileManager{
-		Mode: mode,
-		Db:   db,
+func New(mode string, db *gorm.DB, logger *zap.Logger) *FileManager {
+	f := &FileManager{
+		Mode:          mode,
+		db:            db,
+		log:           logger,
+		expiryManager: NewExpiryManager(logger),
 	}
+
+	f.expiryManager.StartCleaner()
+
+	return f
 }
 
 // Saves the provided file depending on the selected file manager mode.
@@ -61,22 +78,20 @@ func (f *FileManager) Save(file *FileInfo) error {
 	// We don't have to check if guest uploads are enabled here since we're already checking for that
 	// in the uploads route func
 	if file.OwnerId != "" {
-		if err := f.Db.Model(&database.UserRecord{}).Where("user_id = ?", file.OwnerId).First(&user).Error; err != nil {
+		if err := f.db.Model(&database.UserRecord{}).Where("user_id = ?", file.OwnerId).First(&user).Error; err != nil {
 			if err == gorm.ErrRecordNotFound {
 				return ErrUserNotExist
 			}
 
-			return fmt.Errorf("failed to query database: %v", err)
-		}
+			f.log.Error("Failed to query database", zap.Error(err))
 
-		if !user.IsVerified {
-			return ErrUserNotVerified
+			return fmt.Errorf("failed to query database: %v", err)
 		}
 	}
 
 	switch f.Mode {
 	case "aws":
-		err = f.processS3Upload(file, user)
+		// err = f.processS3Upload(file, user)
 
 	case "on-disk":
 		err = f.processLocalUpload(file, user)
@@ -95,20 +110,20 @@ func (f *FileManager) Save(file *FileInfo) error {
 	return err
 }
 
-func (f *FileManager) processS3Upload(file *FileInfo, user *database.UserRecord) error {
-	return nil
-}
-
 func (f *FileManager) processLocalUpload(file *FileInfo, user *database.UserRecord) error {
 	var userDirPath string
 
 	if user == nil {
-		userDirPath = filepath.Join(flags.BasePath, "guest_uploads")
+		userDirPath = filepath.Join(flags.BasePath, "files", "guest_uploads")
+
+		// Set a random filename
+		ext := filepath.Ext(file.Header.Filename)
+		file.Header.Filename = util.RandomString(10) + ext
 	} else {
-		userDirPath = filepath.Join(flags.BasePath, user.UUID)
+		userDirPath = filepath.Join(flags.BasePath, "files", user.UUID)
 	}
 
-	err := os.MkdirAll(userDirPath, os.ModeDir)
+	err := os.MkdirAll(userDirPath, 0755)
 	if err != nil {
 		if errors.Is(err, fs.ErrPermission) {
 			return ErrMkdirPermission
@@ -124,8 +139,9 @@ func (f *FileManager) processLocalUpload(file *FileInfo, user *database.UserReco
 	}
 
 	var existingFiles []string
-	err = f.Db.Model(&database.UserRecord{}).Where("owner_id = ?").Select("filename").Find(&existingFiles).Error
+	err = f.db.Model(&database.FileRecord{}).Where("owner_id = ?", file.OwnerId).Select("filename").Find(&existingFiles).Error
 	if err != nil {
+		f.log.Error("Failed to query database", zap.Error(err))
 		return err
 	}
 
@@ -153,6 +169,7 @@ func (f *FileManager) processLocalUpload(file *FileInfo, user *database.UserReco
 
 	dest, err := os.Create(filePath)
 	if err != nil {
+		f.log.Error("Failed to create file", zap.Error(err))
 		return ErrFileCreate
 	}
 
@@ -167,13 +184,18 @@ func (f *FileManager) processLocalUpload(file *FileInfo, user *database.UserReco
 	}
 
 	record := &database.FileRecord{
-		CreatedAt: time.Now().Unix(),
-		OwnerId:   file.OwnerId,
-		ExpiresAt: file.ExpiresAt,
-		MimeType:  file.MimeType,
-		Location:  filePath,
-		Filename:  file.Header.Filename,
+		CreatedAt:    time.Now().Unix(),
+		OwnerId:      file.OwnerId,
+		ExpiresAt:    file.ExpiresAt,
+		MimeType:     file.MimeType,
+		Location:     filePath,
+		Filename:     file.Header.Filename,
+		UploadMethod: f.Mode,
 	}
 
-	return f.Db.Model(&database.UserRecord{}).Create(record).Error
+	if file.ExpiresAt > 0 {
+		f.expiryManager.AddFile(filePath, file.ExpiresAt)
+	}
+
+	return f.db.Model(&database.FileRecord{}).Create(record).Error
 }

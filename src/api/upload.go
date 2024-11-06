@@ -1,11 +1,11 @@
-package routes
+package api
 
 import (
 	"bash06/goimg/src/database"
 	"bash06/goimg/src/files"
 	"bash06/goimg/src/flags"
+	"bash06/goimg/src/util"
 	"fmt"
-	"math/rand"
 	"net/http"
 	"slices"
 	"strconv"
@@ -19,29 +19,11 @@ import (
 	"gorm.io/gorm"
 )
 
-const (
-	themLettersNShit = "abcdefghijklmnoprstuwxyzABCDEFGHIJKLMNOPRSTUWXYZ1234567890"
-)
-
 type FileUploadOptions struct {
 	ExpiresAt   int64
 	CreatedAt   int64
 	MaxFileSize int64
 	OwnerId     string
-}
-
-func randomString(n int) string {
-	if n < 1 {
-		return ""
-	}
-
-	name := ""
-
-	for range n {
-		name += string(themLettersNShit[rand.Intn(len(themLettersNShit))])
-	}
-
-	return name
 }
 
 func prepGuestUpload(c *gin.Context, requestId string) *FileUploadOptions {
@@ -63,7 +45,7 @@ func prepGuestUpload(c *gin.Context, requestId string) *FileUploadOptions {
 	expiresAt := int64(0)
 
 	if *flags.EnableGuestFileDeletion {
-		expiresAt = time.Now().Add(time.Hour * time.Duration(*flags.GuestFileDeletionTime)).Unix()
+		expiresAt = time.Now().Add(time.Second * time.Duration(*flags.GuestFileDeletionTime)).Unix()
 	}
 
 	return &FileUploadOptions{
@@ -74,7 +56,7 @@ func prepGuestUpload(c *gin.Context, requestId string) *FileUploadOptions {
 	}
 }
 
-func prepUserUpload(c *gin.Context, h *Handler, requestId string) *FileUploadOptions {
+func prepUserUpload(c *gin.Context, h *ApiHandler, requestId string) *FileUploadOptions {
 	tokenStr := strings.TrimPrefix(c.GetHeader("Authorization"), "Bearer ")
 	userId := ""
 
@@ -141,9 +123,9 @@ func prepUserUpload(c *gin.Context, h *Handler, requestId string) *FileUploadOpt
 
 // Uploads a new, singular file to the instance.
 // Depending on how you configured the flags unregistered users have different permissions (or can't use the service)
-func (h *Handler) upload(c *gin.Context) {
+func (h *ApiHandler) upload(c *gin.Context) {
 	// This is useful in case someone encounters a 500 error. The user would report the request ID which would make reading the specific logs easier to see what went wrong
-	requestId := randomString(10)
+	requestId := util.RandomString(10)
 	tokenString := c.GetHeader("Authorization")
 
 	var uploadOptions *FileUploadOptions
@@ -236,7 +218,7 @@ func (h *Handler) upload(c *gin.Context) {
 		ExpiresAt: uploadOptions.ExpiresAt,
 	}
 
-	err = h.FManager.Save(fileInfo)
+	err = h.FileManager.Save(fileInfo)
 	if err != nil {
 		h.Log.Error("File manager failed to save file", zap.String("RequestId", requestId), zap.Error(err))
 
