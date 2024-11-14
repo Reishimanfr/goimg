@@ -28,11 +28,14 @@ var (
 		"image/webp",
 	}
 
-	Dev    = flag.Bool("dev", false, "yea")
+	Dev    = flag.Bool("dev", false, "Enables debugging stuff")
 	Port   = flag.String("port", "8080", "Port on which the server should run. Overwritten if using secure mode")
 	Secure = flag.Bool("secure", true, "Enables https")
 	// Only needed if storage type is aws
 	// todo
+
+	SslCertPath = flag.String("ssl-cert-path", "", "Path to your ssl certificate file")
+	SslKeyPath  = flag.String("ssl-key-path", "", "Path to your ssl certificate key file")
 
 	execPath, _ = os.Executable()
 	BasePth     = filepath.Dir(execPath)

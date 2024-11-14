@@ -4,7 +4,9 @@ import (
 	"context"
 	"crypto/tls"
 	"errors"
+	"flag"
 	"fmt"
+	"io"
 	"io/fs"
 	"log"
 	"net/http"
@@ -60,6 +62,8 @@ func watchFiles(db *gorm.DB, logger *zap.Logger) {
 }
 
 func main() {
+	flag.Parse()
+
 	config := zap.NewDevelopmentConfig()
 	logger, err := config.Build()
 	if err != nil {
@@ -96,6 +100,11 @@ func main() {
 		server.Addr = ":443"
 	}
 
+	if !*flags.Dev {
+		gin.SetMode(gin.ReleaseMode)
+		gin.DefaultWriter = io.Discard
+	}
+
 	h := routes.Handler{
 		Router: r,
 		Logger: logger,
@@ -106,9 +115,7 @@ func main() {
 
 	go func() {
 		if *flags.Secure {
-			fmt.Println("Secure!")
-			// test
-			if err := server.ListenAndServeTLS("/etc/letsencrypt/live/nullptr.ddns.net/fullchain.pem", "/etc/letsencrypt/live/nullptr.ddns.net/privkey.pem"); err != nil && err != http.ErrServerClosed {
+			if err := server.ListenAndServeTLS(*flags.SslCertPath, *flags.SslKeyPath); err != nil && err != http.ErrServerClosed {
 				log.Fatal("Failed to start server", zap.Error(err))
 			}
 		} else {
