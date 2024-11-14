@@ -10,6 +10,7 @@ Sick of the absurdly low upload limits on discord? Want to upload your game repl
 - Caching
 - Video streaming
 - Lots of customizability
+- Easy integration with thunar and ShareX (soon!)
 
 ## How to self-host
 ### 1. Building the binary
@@ -65,3 +66,48 @@ You can alternatively change the port used by the server with the `-port` flag
 | `-dev`             | Enables debugging stuff                                     | false         |
 | `-port`            | Sets what port the server runs on. Ignored with `-secure`   | 8080          |
 | `-secure`          | Enables HTTPS                                               | false         |
+
+
+## Integrations
+### Thunar
+#### 1. Create a script to upload images 
+```bash
+#!/bin/bash
+
+FILE="$1"
+TOKEN="$2"
+URL="[your upload url here]"             # For example nullptr.ddns.net/upload
+BASE_URL="[your general url here]"       # For example nullptr.ddns.net         (notice the lack of /upload here)
+
+response=$(curl -s -w "%{http_code}" -o /tmp/upload_response.json -X POST -F "file=@${FILE}" -H "Authorization: ${TOKEN}" ${URL})
+
+if [ "$response" -eq 200 ]; then
+    filename=$(jq -r '.key' /tmp/upload_response.json)
+
+    if [ "$filename" != "null" ] && [ -n "$filename" ]; then
+        upload_url="${BASE_URL}${filename}"
+
+        # WARNING: This was tested on wayland and worked fine, may not work well for u if ur on x11 idk        
+        echo -n "$upload_url" | xclip -selection clipboard
+
+        # Success notification
+        # If u don't want this just comment the line out
+        notify-send "Upload Successful" "The file has been successfully uploaded.\nURL copied to clipboard: $upload_url"
+    else
+        # Failure if the filename (key) is missing or invalid
+        # Same here but I suggest you leave this
+        notify-send "Upload Failed" "Failed to extract filename from the server response."
+    fi
+else
+    notify-send "Upload Failed" "The file upload failed with status code $response."
+    echo "$response"
+fi
+```
+#### 2. Add a new custom action in thunar
+Open thunar, click `Edit > Configure custom actions...`<br>
+Add a new action and name it whatever you like<br>
+Set the command to `/path/to/your/upload/script %f [your access token the one that shows when you first launch the server]`<br>
+Go to `Appearance Conditions` and enable whatever you want<br>
+
+### ShareX
+Soon :3
