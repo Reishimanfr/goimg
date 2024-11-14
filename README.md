@@ -1,9 +1,15 @@
 > [!WARNING]
 > This readme is nowhere near finished.
 
-## Goimg - A simple file embedded for discord
+## Goimg - A simple file hosting service
 Sick of the absurdly low upload limits on discord? Want to upload your game replays without having to relay on 3rd party services? This program may be for you!
-<br><br>Goimg is a very simple HTTP server that allows you to embed large files on external websites like discord or many more. Everything is hosted locally so you know your files are safe!
+<br><br>Goimg is a very simple HTTP(s) server that allows you to embed large files on external websites like discord or many more. Everything is hosted locally so you know your files are safe!
+
+## Features
+- Database-directory sync (if you delete files from the files folder they'll also be deleted from the database automatically)
+- Caching
+- Video streaming
+- Lots of customizability
 
 ## How to self-host
 ### 1. Building the binary
@@ -11,12 +17,11 @@ Sick of the absurdly low upload limits on discord? Want to upload your game repl
 > This assumes you have everything downloaded and working correctly
 
 > [!WARNING]
-> If you're using the `-safe` flag you may need to run the binary as root (with `sudo`)
+> If you're using the `-safe` flag you may need to run the binary as root
 ```sh
 git clone --depth=1 https://github.com/Reishimanfr/goimg
 cd goimg
 go build
-./goimg
 ```
 
 ### 2. Downloading a pre-built binary
@@ -46,6 +51,15 @@ Example:
 ```sh
 ./goimg -secure=true -ssl-cert-path="/path/to/your/cert" -ssl-key-path="/path/to/your/certkey"
 ```
-
+Don't to forget to run it as root!
 ### 2. HTTP setup (not secure)
-todo
+Simply run the binary. Yup, that's it.<br>
+You can alternatively change the port used by the server with the `-port` flag
+
+## Flags
+`-max-file-size`   -> Sets the max allowed file size (in MB) (default: 50)
+`-storage-type`    -> Sets where files should be set. FOR NOW ONLY on-disk, AWS COMING SOON. (default: on-disk)
+`-token-size-bits` -> Length of the generated opaque tokens. More = better security but more annoying. (default: 64)
+`-dev`             -> Enables debugging stuff. (default: false)
+`-port`            -> Sets what port the server runs on. Ignored if `-secure` is set to `true`. (default: 8080)
+`-secure`          -> Enables HTTPS. (default: false)
