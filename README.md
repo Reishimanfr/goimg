@@ -57,9 +57,11 @@ Simply run the binary. Yup, that's it.<br>
 You can alternatively change the port used by the server with the `-port` flag
 
 ## Flags
-`-max-file-size`   -> Sets the max allowed file size (in MB) (default: 50)
-`-storage-type`    -> Sets where files should be set. FOR NOW ONLY on-disk, AWS COMING SOON. (default: on-disk)
-`-token-size-bits` -> Length of the generated opaque tokens. More = better security but more annoying. (default: 64)
-`-dev`             -> Enables debugging stuff. (default: false)
-`-port`            -> Sets what port the server runs on. Ignored if `-secure` is set to `true`. (default: 8080)
-`-secure`          -> Enables HTTPS. (default: false)
+| Name               | Description                                                 | Default value |
+| ----               | -----------                                                 | :-----------: |
+| `-max-file-size`   | Sets the max allowed file size (in MB)                      |  50           |
+| `-storage-type`    | Sets where files should be saved                            | on-disk       |
+| `-token-size-bits` | Length of the generated tokens (more = secure but annoying) | 64            |
+| `-dev`             | Enables debugging stuff                                     | false         |
+| `-port`            | Sets what port the server runs on. Ignored with `-secure`   | 8080          |
+| `-secure`          | Enables HTTPS                                               | false         |
