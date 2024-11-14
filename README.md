@@ -28,7 +28,7 @@ go build
 Simply go to the releases page and choose your binary
 
 ## Making the API accessible outside your local network
-If you don't have a custom domain I highly recommend you get one from https://noip.com. They're completely free and you can configure them to auto-update the IP address if you can't set a static IP on your router
+If you don't have a custom domain I highly recommend you get one from https://noip.com. They're completely free and you can configure them to auto-update the IP address if you can't set a static IP on your router. (Not sposored but I WISH noip please reach out :3)
 
 ### 1. HTTPS setup (recommended)
 #### 1.1 Open ports to your local network
