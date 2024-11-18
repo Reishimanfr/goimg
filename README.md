@@ -1,6 +1,9 @@
 > [!WARNING]
 > This readme is nowhere near finished.
 
+> [!WARNING]
+> As time goes the project will change, this project is still under active development and none of the currently available features are 100% here to stay as they are. Be mindful of breaking changes!
+
 ## Goimg - A simple file hosting service
 Sick of the absurdly low upload limits on discord? Want to upload your game replays without having to relay on 3rd party services? This program may be for you!
 <br><br>Goimg is a very simple HTTP(s) server that allows you to embed large files on external websites like discord or many more. Everything is hosted locally so you know your files are safe!
