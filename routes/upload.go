@@ -37,11 +37,13 @@ func randStr(n int) string {
 }
 
 func (h *Handler) upload(c *gin.Context) {
+	requestId := randStr(10)
 	token := c.GetHeader("Authorization")
 
 	if token == "" {
 		c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
-			"error": "No authorization token provided",
+			"error":      "No authorization token provided",
+			"request_id": requestId,
 		})
 		return
 	}
@@ -51,7 +53,8 @@ func (h *Handler) upload(c *gin.Context) {
 	if err := h.Db.Table("tokens").Where("token = ?", token).First(&tokenRecord).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
-				"error": "Invalid token provided",
+				"error":      "Invalid token provided",
+				"request_id": requestId,
 			})
 			return
 		}
@@ -59,7 +62,8 @@ func (h *Handler) upload(c *gin.Context) {
 		h.Logger.Error("Error while looking for opaque token", zap.Error(err))
 
 		c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{
-			"error": "Something went wrong while processing your request",
+			"error":      "Something went wrong while processing your request",
+			"request_id": requestId,
 		})
 		return
 	}
@@ -70,7 +74,8 @@ func (h *Handler) upload(c *gin.Context) {
 	if err != nil {
 		if err.Error() == "http: request body too large" {
 			c.AbortWithStatusJSON(http.StatusRequestEntityTooLarge, gin.H{
-				"error": "The provided file is too big",
+				"error":      "The provided file is too big",
+				"request_id": requestId,
 			})
 			return
 		}
@@ -78,19 +83,30 @@ func (h *Handler) upload(c *gin.Context) {
 		h.Logger.Error("Error while parsing multipart form", zap.Error(err))
 
 		c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{
-			"error": "Something went wrong while processing your request",
+			"error":      "Something went wrong while processing your request",
+			"request_id": requestId,
 		})
 		return
 	}
 
 	file, err := c.FormFile("file")
+	if err != nil {
+		h.Logger.Error("Error while reading multipart form file", zap.String("RequestId", requestId), zap.Error(err))
+
+		c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{
+			"error":      "Something went wrong while processing your request",
+			"request_id": requestId,
+		})
+		return
+	}
 
 	srcFile, err := file.Open()
 	if err != nil {
 		h.Logger.Error("Error while opening source file", zap.Error(err))
 
 		c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{
-			"error": "Something went wrong while processing your request",
+			"error":      "Something went wrong while processing your request",
+			"request_id": requestId,
 		})
 		return
 	}
@@ -105,7 +121,8 @@ func (h *Handler) upload(c *gin.Context) {
 
 	if !slices.Contains(flags.AllowedFileTypes, mime) {
 		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{
-			"error": mime + " files are not allowed",
+			"error":      mime + " files are not allowed",
+			"request_id": requestId,
 		})
 		return
 	}
@@ -126,7 +143,8 @@ func (h *Handler) upload(c *gin.Context) {
 		h.Logger.Error("Error while creating database record", zap.Error(err))
 
 		c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{
-			"error": "Something went wrong while processing your request",
+			"error":      "Something went wrong while processing your request",
+			"request_id": requestId,
 		})
 		return
 	}
@@ -135,7 +153,8 @@ func (h *Handler) upload(c *gin.Context) {
 		h.Logger.Error("Error while committing transaction", zap.Error(err))
 
 		c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{
-			"error": "Something went wrong while processing your request",
+			"error":      "Something went wrong while processing your request",
+			"request_id": requestId,
 		})
 		return
 	}
@@ -147,7 +166,8 @@ func (h *Handler) upload(c *gin.Context) {
 		h.Logger.Error("Error while creating destination file", zap.Error(err))
 
 		c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{
-			"error": "Something went wrong while processing your request",
+			"error":      "Something went wrong while processing your request",
+			"request_id": requestId,
 		})
 		return
 	}
@@ -162,7 +182,8 @@ func (h *Handler) upload(c *gin.Context) {
 		h.Logger.Error("Error while copying file contents", zap.Error(err))
 
 		c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{
-			"error": "Something went wrong while processing your request",
+			"error":      "Something went wrong while processing your request",
+			"request_id": requestId,
 		})
 		return
 	}

@@ -5,7 +5,7 @@ import (
 	"encoding/base64"
 )
 
-func Generate(n int) (string, error) {
+func GenerateOpaque(n int) (string, error) {
 	bytes := make([]byte, n)
 
 	if _, err := rand.Read(bytes); err != nil {
